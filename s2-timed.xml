@@ -1,0 +1,527 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE nta PUBLIC '-//Uppaal Team//DTD Flat System 1.1//EN' 'http://www.it.uu.se/research/group/darts/uppaal/flat-1_1.dtd'><nta><declaration>
+
+const int nTrains = 3; 
+const int nSections = 10;
+const bool green = 0;
+const bool yellow = 1;
+const bool red = 2;
+const int backwards = -1;
+const int stopped = 0;
+const int slow = 1;
+const int fast = 2;
+const bool closed = 0;
+const bool opened = 1;
+const int notInSystem = -1;
+const int wantToCross = 0;
+const int wantToPark = 1;
+const int wantToLeave = 2;
+const int parked = 3;
+const int nParkings = 3;
+const int nSwitches = 4;
+const int CONTROLLER_MAX_IDLE = 2;
+
+typedef int[0, nSections-1] Section_t;
+typedef int[0, nTrains-1] Train_t;
+typedef int[0, nSwitches-1] Switch_t;
+
+bool sectionState[Section_t];
+bool switchState[Switch_t];
+
+int[-1,2] trainSpeed[Train_t];
+int[-1,3] trainAction[Train_t];
+int[-1, nSections-1] trainSection[Train_t]; 
+int[-1, nTrains-1] parkedIn[nParkings];
+int[-1,nParkings-1] willParkTo[Train_t];
+
+bool trainIsLeaving = false;
+bool canLeaveSystem = true;
+
+
+const int MAX_TIME_PER_SECTION = 10;
+const int MIN_TIME_PER_SECTION = 4;
+
+clock trainClock[Train_t];
+
+int[-1, nTrains-1] lockBy = -1; 
+bool parkTrain = false;
+bool addTrain = false;
+
+Train_t currentTrain;
+
+broadcast chan GoSlow[Train_t];
+broadcast chan GoFast[Train_t];
+broadcast chan GoBackwards[Train_t];
+chan Stop[Train_t];
+chan WantToLeave;
+chan WantToCross;
+chan WantToPark;
+chan AddTrain;
+chan ParkTrain;
+chan Open[Switch_t];
+chan Close[Switch_t];
+chan BecomesActive[Section_t];
+urgent broadcast chan BecomesInactive[int[-1, nSections-1]];
+urgent chan Update[Train_t];
+
+// HANDLE THE QUEUE ---------
+
+Train_t trainsQueue[nTrains+1];
+int[0, nTrains] queueLength;
+
+void enqueue(Train_t train) {
+	trainsQueue[queueLength++] = train;
+}
+
+void dequeue() {
+	int i = 0;
+	queueLength -= 1;
+	while (i &lt; queueLength) {
+		trainsQueue[i] = trainsQueue[i+1];
+		i++;
+	}
+	trainsQueue[i] = 0;
+}
+
+Train_t queueFront() {
+	return trainsQueue[0];
+}
+
+// HANDLE THE QUEUE -------------
+
+void initialize() {
+	int i;
+
+	for(i=0; i&lt;nSections; i++) {
+		sectionState[i] = green;	
+	}
+
+	for(i=0; i&lt;nTrains; i++) {
+		willParkTo[i] = -1;
+	}
+
+	sectionState[9] = red;
+	sectionState[7] = red;
+	sectionState[5] = red;
+	trainAction[0] = parked;
+	trainAction[1] = parked;
+	trainAction[2] = parked;
+	trainSpeed[0] = stopped;
+	trainSpeed[1] = stopped;
+	trainSpeed[2] = stopped;
+	parkedIn[0] = 0;
+	parkedIn[1] = 1;
+	parkedIn[2] = 2;
+	trainSection[0] = 9;
+	trainSection[1] = 5;
+	trainSection[2] = 7;
+}
+
+int[0,nParkings] numberOfTrainParked() {
+	int i, counter = 0;
+	for(i=0; i&lt;nParkings; i++)
+		if(parkedIn[i] != -1) 
+			counter++;
+	return counter;
+}
+
+int[-1, nParkings-1] getParkingOfTrain(Train_t train) {
+	int i;
+	for(i=0; i&lt; nParkings; i++) 
+		if(parkedIn[i] == train)
+			return i;
+	return -1;
+}
+
+bool canLeaveParkingSpot(Train_t train) {
+	int[-1, nParkings-1] parkingSpot = getParkingOfTrain(train);
+	int i;
+
+	if(parkingSpot != -1) {
+		if(parkingSpot == nParkings-1)
+			return true;
+
+		for(i = parkingSpot+1; i &lt; nParkings; i++) 
+			if(parkedIn[i] != -1) 
+				return false;
+
+	} else 
+		return false;
+	return true;
+}
+
+int[-1, nParkings-1] getFreeParkingSpot() {
+	int i;
+	for(i=0;i&lt;nParkings;i++) 
+		if(parkedIn[i] == -1)
+			return i;
+	return -1;
+}
+
+int[-1, nTrains-1] getTrainOnSection(int[-1, nSections-1] section){
+	int i;
+	for(i=0; i&lt;nTrains; i++)
+		if(trainSection[i] == section)
+			return i;
+	return -1;
+}
+
+int[-1, nSections-1] getPreviousSectionID(Section_t sectionID){
+	int[0, nTrains] train;
+
+	if (sectionID == 0)
+		return -1;
+	else if (sectionID == 1)
+		return 0;
+	else if (sectionID == 2)
+		return 1;
+	else if (sectionID == 3) {
+		for (train=0; train&lt;nTrains; ++train)
+			if (trainSection[train] == 8 &amp;&amp; trainSpeed[train] == slow &amp;&amp; trainAction[train] == wantToLeave &amp;&amp; trainIsLeaving)
+				return 8;
+		return 2;
+	}
+	else if (sectionID == 4)
+		return 3;
+	else if (sectionID == 5)
+		return 6;
+	else if (sectionID == 6) {
+		for (train=0; train&lt;nTrains; ++train)
+			if (trainSection[train] == 1 &amp;&amp; trainSpeed[train] == slow &amp;&amp; trainAction[train] == wantToPark &amp;&amp; parkTrain)
+				return 1;
+			else if (trainSection[train] == 7 &amp;&amp; trainSpeed[train] == backwards &amp;&amp; trainAction[train] == wantToPark &amp;&amp; parkTrain)
+				return 7;
+			else if (trainSection[train] == 5 &amp;&amp; trainSpeed[train] == slow &amp;&amp; trainAction[train] == wantToLeave &amp;&amp; addTrain)
+				return 5;
+	}
+	else if (sectionID == 7) {
+		for (train=0; train&lt;nTrains; ++train)
+			if (trainSection[train] == 6 &amp;&amp; trainSpeed[train] == slow)
+				return 6;
+			else if (trainSection[train] == 8 &amp;&amp; trainSpeed[train] == backwards)
+				return 8;
+	}
+	else if (sectionID == 8) {
+		for (train=0; train&lt;nTrains; ++train)
+			if (trainSection[train] &amp;&amp; trainSpeed[train] == slow &amp;&amp; trainAction[train] != wantToCross &amp;&amp; (addTrain || parkTrain))
+				return 7;
+			else if (trainSection[train] &amp;&amp; trainSpeed[train] == backwards &amp;&amp; trainAction[train] == wantToLeave &amp;&amp; addTrain)
+				return 9;
+	}
+	else if (sectionID == 9)
+		return 8;
+	else if (sectionID == 10)
+		return 4;
+	return -1;
+}</declaration><template><name x="5" y="5">Train</name><parameter>const Train_t id</parameter><location id="id0" x="-2704" y="-608"></location><init ref="id0"/><transition><source ref="id0"/><target ref="id0"/><label kind="synchronisation" x="-2592" y="-600">GoBackwards[id]?</label><label kind="assignment" x="-2592" y="-584">trainSpeed[id] = backwards</label><nail x="-2600" y="-600"/><nail x="-2600" y="-560"/></transition><transition><source ref="id0"/><target ref="id0"/><label kind="synchronisation" x="-2592" y="-712">GoSlow[id]?</label><label kind="assignment" x="-2592" y="-696">trainSpeed[id] = slow</label><nail x="-2600" y="-712"/><nail x="-2600" y="-672"/></transition><transition><source ref="id0"/><target ref="id0"/><label kind="synchronisation" x="-2592" y="-656">GoFast[id]?</label><label kind="assignment" x="-2592" y="-640">trainSpeed[id] = fast</label><nail x="-2600" y="-656"/><nail x="-2600" y="-616"/></transition><transition><source ref="id0"/><target ref="id0"/><label kind="synchronisation" x="-2592" y="-544">Stop[id]?</label><label kind="assignment" x="-2592" y="-528">trainSpeed[id] = stopped</label><nail x="-2600" y="-504"/><nail x="-2600" y="-544"/></transition></template><template><name>Section</name><parameter>const Section_t id</parameter><declaration>int[-1, nSections-1] previousSectionID;
+int[-1, nTrains-1] trainToUpdate;
+
+
+int[-1, nTrains-1] becomesOccupiedBy(int[-1, nSections-1] previousSectionID) {
+	int[-1, nTrains-1] currentTrain = 0;
+
+	sectionState[id] = red;
+
+	if (id == 0) {
+		currentTrain = queueFront();
+		dequeue();
+	} else 
+		currentTrain = getTrainOnSection(previousSectionID);
+	
+	
+	if (currentTrain != -1) 
+		trainSection[currentTrain] = id;
+	
+	
+	return currentTrain;
+}
+
+void becomesFree() {
+	sectionState[id] = green;
+	if (id == 4){
+		int[-1, nTrains-1] train = getTrainOnSection(id);
+		if (train != -1) 
+			trainSection[train] = -1;
+	}
+		
+		
+}
+</declaration><location id="id1" x="-2440" y="-248"></location><location id="id2" x="-2440" y="-144"><name x="-2416" y="-152">SectionFullyEntered</name><committed/></location><location id="id3" x="-2800" y="-144"></location><init ref="id3"/><transition><source ref="id1"/><target ref="id2"/><label kind="synchronisation" x="-2432" y="-216">BecomesInactive[previousSectionID]?</label><label kind="assignment" x="-2432" y="-200">trainToUpdate = becomesOccupiedBy(previousSectionID)</label></transition><transition><source ref="id2"/><target ref="id3"/><label kind="guard" x="-2712" y="-120">trainToUpdate == -1</label><nail x="-2488" y="-96"/><nail x="-2744" y="-96"/></transition><transition><source ref="id3"/><target ref="id3"/><label kind="guard" x="-3024" y="-176">sectionState[id] == red</label><label kind="synchronisation" x="-3024" y="-160">BecomesInactive[id]?</label><label kind="assignment" x="-3024" y="-144">becomesFree()</label><nail x="-2848" y="-120"/><nail x="-2848" y="-160"/></transition><transition><source ref="id2"/><target ref="id3"/><label kind="guard" x="-2712" y="-184">trainToUpdate != -1</label><label kind="synchronisation" x="-2712" y="-168">Update[trainToUpdate]!</label></transition><transition><source ref="id3"/><target ref="id1"/><label kind="guard" x="-2800" y="-304">sectionState[id] != red</label><label kind="synchronisation" x="-2800" y="-288">BecomesActive[id]?</label><label kind="assignment" x="-2800" y="-272">previousSectionID = getPreviousSectionID(id)</label><nail x="-2800" y="-248"/></transition></template><template><name>Controller</name><declaration>clock c;
+
+bool canCross(Train_t train) {
+	return  trainAction[train] == wantToCross &amp;&amp;
+			trainSpeed[train] == stopped &amp;&amp;
+			!(trainSection[train] &lt; 4 &amp;&amp;
+				sectionState[trainSection[train]+1] == red) &amp;&amp;
+			!(trainSection[train] == 2 &amp;&amp; trainIsLeaving);
+}
+
+bool canLeave(Train_t train) {
+	return (trainAction[train] == parked &amp;&amp; (addTrain == true &amp;&amp; canLeaveParkingSpot(train) &amp;&amp; lockBy == -1)) ||
+	       (trainAction[train] == wantToLeave &amp;&amp; trainSpeed[train] == stopped &amp;&amp; !(sectionState[2] == red || sectionState[3] == red));
+}
+
+bool canPark(Train_t train) {
+	return trainAction[train] == wantToPark &amp;&amp;
+			trainSpeed[train] == stopped &amp;&amp;
+			!(trainSection[train] == 0 &amp;&amp; sectionState[1] == red);
+}
+
+bool conditionsFullfilledToCross(Train_t train) {
+	return trainAction[train] == wantToCross &amp;&amp; 
+			(trainSection[train] != 0 ||
+			(parkTrain == false || getFreeParkingSpot() == -1 || lockBy != -1));
+}
+
+bool conditionsFullfilledToPark(Train_t train) {
+	return  (trainAction[train] == wantToPark &amp;&amp; lockBy == train) ||
+		(trainAction[train] == wantToCross &amp;&amp;
+			trainSection[train] == 0 &amp;&amp;
+			parkTrain == true  &amp;&amp;
+			getFreeParkingSpot() != -1 &amp;&amp;
+			lockBy == -1);
+}
+
+bool conditionsFullfilledToLeave(Train_t train) {
+	return trainAction[train] == wantToLeave &amp;&amp; lockBy == train;
+}
+
+
+bool noOtherChoice() {
+	int i;
+	for(i=0; i&lt;nTrains; i++) {
+		if (trainAction[i] == wantToPark &amp;&amp; trainSpeed[i] == stopped &amp;&amp; !(trainSection[i] == 0 &amp;&amp; sectionState[1] == red))
+			return false;
+		if(trainAction[i] == wantToCross &amp;&amp; trainSpeed[i] == stopped &amp;&amp; !(trainSection[i] &lt; 4 &amp;&amp; sectionState[trainSection[i]+1] == red) &amp;&amp; !(trainSection[i] == 2 &amp;&amp; trainIsLeaving))
+			return false; 
+		if(trainAction[i] == wantToLeave &amp;&amp; trainSpeed[i] == stopped &amp;&amp; !(sectionState[2] == red || sectionState[3] == red))
+			return false;
+		if(trainAction[i] == parked &amp;&amp; addTrain == true &amp;&amp; canLeaveParkingSpot(i) &amp;&amp; lockBy == -1)
+			return false;
+	}
+	return true;
+}
+</declaration><location id="id4" x="-1808" y="-1191"><committed/></location><location id="id5" x="-1808" y="-1648"><committed/></location><location id="id6" x="-1816" y="-1424"><committed/></location><location id="id7" x="-2192" y="-1840"><name x="-2184" y="-1864">Waiting</name><label kind="invariant" x="-2176" y="-1832">c &lt;= CONTROLLER_MAX_IDLE</label></location><location id="id8" x="-2192" y="-1952"><name x="-2202" y="-1982">Init</name><committed/></location><init ref="id8"/><transition><source ref="id7"/><target ref="id7"/><label kind="guard" x="-2096" y="-1032">c == CONTROLLER_MAX_IDLE &amp;&amp;
+noOtherChoice()</label><label kind="assignment" x="-2096" y="-1008">c=0</label><nail x="-2192" y="-984"/><nail x="-1640" y="-984"/><nail x="-1640" y="-1840"/></transition><transition><source ref="id4"/><target ref="id7"/><label kind="synchronisation" x="-1768" y="-1216">WantToPark!</label><nail x="-1640" y="-1192"/><nail x="-1640" y="-1840"/></transition><transition><source ref="id5"/><target ref="id7"/><label kind="synchronisation" x="-1776" y="-1672">WantToCross!</label><nail x="-1640" y="-1648"/><nail x="-1640" y="-1840"/></transition><transition><source ref="id6"/><target ref="id7"/><label kind="synchronisation" x="-1776" y="-1448">WantToLeave!</label><nail x="-1640" y="-1424"/><nail x="-1640" y="-1840"/></transition><transition><source ref="id7"/><target ref="id4"/><label kind="select" x="-2096" y="-1160">train : Train_t</label><label kind="guard" x="-2096" y="-1144">c == CONTROLLER_MAX_IDLE &amp;&amp;
+canPark(train)</label><label kind="assignment" x="-2096" y="-1112">currentTrain = train,
+c=0</label><nail x="-2192" y="-1080"/><nail x="-1808" y="-1080"/></transition><transition><source ref="id7"/><target ref="id5"/><label kind="select" x="-2104" y="-1624">train : Train_t</label><label kind="guard" x="-2104" y="-1608">c == CONTROLLER_MAX_IDLE &amp;&amp;
+canCross(train)</label><label kind="assignment" x="-2104" y="-1576">currentTrain = train,
+c=0</label><nail x="-2192" y="-1544"/><nail x="-1808" y="-1544"/></transition><transition><source ref="id7"/><target ref="id6"/><label kind="select" x="-2096" y="-1400">train : Train_t</label><label kind="guard" x="-2096" y="-1384">c == CONTROLLER_MAX_IDLE &amp;&amp;
+canLeave(train)</label><label kind="assignment" x="-2096" y="-1352">currentTrain = train,
+c=0</label><nail x="-2192" y="-1320"/><nail x="-1816" y="-1320"/></transition><transition><source ref="id7"/><target ref="id4"/><label kind="select" x="-2096" y="-1262">train : Train_t</label><label kind="guard" x="-2096" y="-1246">conditionsFullfilledToPark(train)</label><label kind="synchronisation" x="-2096" y="-1231">Update[train]?</label><label kind="assignment" x="-2096" y="-1216">currentTrain = train</label><nail x="-2192" y="-1192"/></transition><transition><source ref="id7"/><target ref="id6"/><label kind="select" x="-2104" y="-1504">train : Train_t</label><label kind="guard" x="-2104" y="-1488">conditionsFullfilledToLeave(train)</label><label kind="synchronisation" x="-2104" y="-1472">Update[train]?</label><label kind="assignment" x="-2104" y="-1456">currentTrain = train</label><nail x="-2192" y="-1424"/></transition><transition><source ref="id7"/><target ref="id5"/><label kind="select" x="-2104" y="-1720">train : Train_t</label><label kind="guard" x="-2104" y="-1704">conditionsFullfilledToCross(train)</label><label kind="synchronisation" x="-2104" y="-1688">Update[train]?</label><label kind="assignment" x="-2104" y="-1672">currentTrain = train</label><nail x="-2192" y="-1648"/><nail x="-2192" y="-1648"/></transition><transition><source ref="id7"/><target ref="id7"/><label kind="guard" x="-2528" y="-1952">numberOfTrainParked() &lt;= 0</label><label kind="synchronisation" x="-2392" y="-1936">AddTrain?</label><nail x="-2312" y="-1952"/><nail x="-2312" y="-1912"/></transition><transition><source ref="id7"/><target ref="id7"/><label kind="guard" x="-2600" y="-1824">numberOfTrainParked() &lt; nParkings &amp;&amp;
+numberOfTrainParked() &lt; nTrains</label><label kind="synchronisation" x="-2392" y="-1792">ParkTrain?</label><label kind="assignment" x="-2440" y="-1776">parkTrain = true</label><nail x="-2312" y="-1768"/><nail x="-2312" y="-1816"/></transition><transition><source ref="id7"/><target ref="id7"/><label kind="guard" x="-2600" y="-1744">numberOfTrainParked() &gt;= nParkings ||
+numberOfTrainParked() &gt;= nTrains</label><label kind="synchronisation" x="-2400" y="-1712">ParkTrain?</label><nail x="-2312" y="-1696"/><nail x="-2312" y="-1752"/></transition><transition><source ref="id7"/><target ref="id7"/><label kind="guard" x="-2520" y="-1896">numberOfTrainParked()  &gt; 0</label><label kind="synchronisation" x="-2392" y="-1880">AddTrain?</label><label kind="assignment" x="-2432" y="-1864">addTrain = true</label><nail x="-2312" y="-1848"/><nail x="-2312" y="-1888"/></transition><transition><source ref="id8"/><target ref="id7"/><label kind="assignment" x="-2184" y="-1928">initialize()</label></transition></template><template><name>Switch</name><parameter>const Switch_t id</parameter><declaration>clock c;</declaration><location id="id9" x="-952" y="64"></location><init ref="id9"/><transition><source ref="id9"/><target ref="id9"/><label kind="synchronisation" x="-800" y="72">Close[id]?</label><label kind="assignment" x="-800" y="88">switchState[id] = closed</label><nail x="-808" y="96"/><nail x="-808" y="64"/></transition><transition><source ref="id9"/><target ref="id9"/><label kind="synchronisation" x="-800" y="0">Open[id]?</label><label kind="assignment" x="-800" y="16">switchState[id] = opened</label><nail x="-808" y="8"/><nail x="-808" y="40"/></transition></template><template><name>User</name><declaration>clock c;</declaration><location id="id10" x="-1096" y="-272"></location><init ref="id10"/><transition><source ref="id10"/><target ref="id10"/><label kind="guard" x="-1008" y="-264">c &gt; 2 &amp;&amp; !parkTrain &amp;&amp; !addTrain</label><label kind="synchronisation" x="-1008" y="-248">ParkTrain!</label><label kind="assignment" x="-1008" y="-232">c=0</label><nail x="-1016" y="-264"/><nail x="-1016" y="-224"/></transition><transition><source ref="id10"/><target ref="id10"/><label kind="guard" x="-1008" y="-320">c &gt; 2 &amp;&amp; !addTrain &amp;&amp; !parkTrain</label><label kind="synchronisation" x="-1008" y="-304">AddTrain!</label><label kind="assignment" x="-1008" y="-288">c=0</label><nail x="-1016" y="-280"/><nail x="-1016" y="-320"/></transition></template><template><name>Environment</name><declaration>Train_t currentTrain;
+
+Section_t nextSectionLeaving(Train_t currentTrain) {
+	if (trainSection[currentTrain] == 5)
+		return 6;
+	else if (trainSection[currentTrain] == 6)
+		return 7;	
+	else if (trainSection[currentTrain] == 7)
+		return 8;
+	else if (trainSection[currentTrain] == 8 &amp;&amp; trainSpeed[currentTrain] != backwards)
+		return 3;
+	else if (trainSection[currentTrain] == 8 &amp;&amp; trainSpeed[currentTrain] == backwards)
+		return 7;
+	else if (trainSection[currentTrain] == 9)
+		return 8;
+	
+	return 0; // never get here
+}
+
+Section_t nextSectionParking(Train_t currentTrain) {
+	if (trainSection[currentTrain] == 0)
+		return 1;
+	else if (trainSection[currentTrain] == 1)
+		return 6;	
+	else if (trainSection[currentTrain] == 6 &amp;&amp; trainSpeed[currentTrain] != backwards)
+		return 7;
+	else if (trainSection[currentTrain] == 6 &amp;&amp; trainSpeed[currentTrain] == backwards)
+		return 5;
+	else if (trainSection[currentTrain] == 7 &amp;&amp; trainSpeed[currentTrain] != backwards)
+		return 8;
+	else if (trainSection[currentTrain] == 7 &amp;&amp; trainSpeed[currentTrain] == backwards)
+		return 6;
+	else if (trainSection[currentTrain] == 8)
+		return 9;
+
+	return 0; // never get here
+}</declaration><location id="id11" x="-280" y="-256"><committed/></location><location id="id12" x="296" y="-40"><committed/></location><location id="id13" x="648" y="176"><committed/></location><location id="id14" x="-56" y="-256"><label kind="invariant" x="-8" y="-240">forall(i:Train_t) (trainSection[i] &gt; -1 &amp;&amp; trainSpeed[i] != stopped) 
+imply
+trainClock[i] &lt;= MAX_TIME_PER_SECTION</label></location><init ref="id14"/><transition><source ref="id14"/><target ref="id14"/><label kind="select" x="296" y="-464">train : Train_t</label><label kind="synchronisation" x="296" y="-448">GoBackwards[train]?</label><label kind="assignment" x="296" y="-432">trainClock[train] = 0</label><nail x="288" y="-408"/><nail x="416" y="-408"/></transition><transition><source ref="id14"/><target ref="id14"/><label kind="select" x="104" y="-464">train : Train_t</label><label kind="synchronisation" x="104" y="-448">GoFast[train]?</label><label kind="assignment" x="104" y="-432">trainClock[train] = 0</label><nail x="-40" y="-280"/><nail x="104" y="-408"/><nail x="224" y="-408"/></transition><transition><source ref="id14"/><target ref="id14"/><label kind="select" x="-64" y="-464">train : Train_t</label><label kind="synchronisation" x="-64" y="-448">GoSlow[train]?</label><label kind="assignment" x="-64" y="-432">trainClock[train] = 0</label><nail x="-48" y="-264"/><nail x="-64" y="-408"/><nail x="8" y="-408"/></transition><transition><source ref="id11"/><target ref="id14"/><label kind="synchronisation" x="-264" y="-312">BecomesInactive[-1]!</label><nail x="-280" y="-288"/><nail x="-56" y="-288"/></transition><transition><source ref="id12"/><target ref="id13"/><label kind="synchronisation" x="320" y="-48">BecomesActive[trainSection[currentTrain]+1]!</label></transition><transition><source ref="id14"/><target ref="id13"/><label kind="select" x="-32" y="-24">train : Train_t</label><label kind="guard" x="-32" y="-8">trainClock[train] &gt;= MIN_TIME_PER_SECTION &amp;&amp;
+trainSpeed[train] != stopped &amp;&amp;
+trainAction[train] == wantToCross &amp;&amp;
+trainSection[train] == 4</label><label kind="assignment" x="-32" y="48">currentTrain = train,
+trainClock[train] = 0</label><nail x="-56" y="80"/><nail x="376" y="80"/></transition><transition><source ref="id13"/><target ref="id14"/><label kind="synchronisation" x="304" y="-280">BecomesInactive[trainSection[currentTrain]]!</label><nail x="648" y="-256"/></transition><transition><source ref="id14"/><target ref="id13"/><label kind="select" x="-32" y="128">train : Train_t</label><label kind="guard" x="-32" y="144">trainClock[train] &gt;= MIN_TIME_PER_SECTION &amp;&amp;
+trainSpeed[train] != stopped &amp;&amp;
+trainAction[train] == wantToPark</label><label kind="synchronisation" x="-32" y="184">BecomesActive[nextSectionParking(train)]!</label><label kind="assignment" x="-32" y="200">currentTrain = train,
+trainClock[train] = 0</label><nail x="-56" y="232"/><nail x="384" y="232"/></transition><transition><source ref="id14"/><target ref="id13"/><label kind="select" x="-32" y="304">train : Train_t</label><label kind="guard" x="-32" y="320">trainClock[train] &gt;= MIN_TIME_PER_SECTION &amp;&amp;
+trainSpeed[train] != stopped &amp;&amp;
+trainAction[train] == wantToLeave</label><label kind="synchronisation" x="-32" y="360">BecomesActive[nextSectionLeaving(train)]!</label><label kind="assignment" x="-32" y="376">currentTrain = train,
+trainClock[train] = 0</label><nail x="-56" y="408"/><nail x="392" y="408"/></transition><transition><source ref="id14"/><target ref="id12"/><label kind="select" x="-32" y="-152">train : Train_t</label><label kind="guard" x="-32" y="-136">trainClock[train] &gt;= MIN_TIME_PER_SECTION &amp;&amp;
+trainSpeed[train] != stopped &amp;&amp;
+trainAction[train] == wantToCross &amp;&amp;
+trainSection[train] &lt; 4 &amp;&amp;
+trainSection[train] &gt;= 0</label><label kind="assignment" x="-32" y="-72">currentTrain = train,
+trainClock[train] = 0</label><nail x="-56" y="-40"/></transition><transition><source ref="id14"/><target ref="id11"/><label kind="select" x="-272" y="-240">train: Train_t</label><label kind="guard" x="-272" y="-224">queueLength &gt; 0 &amp;&amp;
+train == queueFront() &amp;&amp;
+trainSection[train] == -1 &amp;&amp;
+sectionState[0] == green</label><label kind="synchronisation" x="-272" y="-168">BecomesActive[0]!</label><label kind="assignment" x="-272" y="-152">trainClock[train] = 0</label></transition></template><template><name>WantToLeaveS</name><declaration>
+bool S4Free() {
+	return sectionState[4] == green;
+}
+
+void updateTrainReachedMainTrack(Train_t currentTrain) {
+	trainAction[currentTrain] = wantToCross;
+	lockBy = -1;
+	trainIsLeaving = false;
+	addTrain = false;
+}
+
+bool onS8_MainTrackOccupied(Train_t currentTrain) {
+	return (trainSection[currentTrain] == 8 &amp;&amp;
+		trainSpeed[currentTrain] != backwards &amp;&amp;
+		(sectionState[2] == red ||
+		sectionState[3] == red));
+}
+
+bool onS8_MainTrackFree(Train_t currentTrain) {
+	return (trainSection[currentTrain] == 8 &amp;&amp;
+		trainSpeed[currentTrain] != backwards &amp;&amp;
+		sectionState[2] == green &amp;&amp;
+		sectionState[3] == green);
+}
+
+bool onS3(Train_t currentTrain) {
+	return trainSection[currentTrain] == 3;
+}
+
+bool parkedIn0(Train_t currentTrain) {
+	return trainSection[currentTrain] == 9;
+}
+
+bool parkedIn1(Train_t currentTrain) {
+	return trainSection[currentTrain] == 5;
+}
+
+bool parkedIn2(Train_t currentTrain) {
+	return trainSection[currentTrain] == 7 &amp;&amp; trainAction[currentTrain] == parked;
+}
+
+
+bool onS7_ReachedSwitch2(Train_t currentTrain) {
+	return trainSection[currentTrain] == 7 &amp;&amp; trainAction[currentTrain] == wantToLeave;
+}
+
+bool onS6(Train_t currentTrain) {
+	return trainSection[currentTrain] == 6;
+}
+
+bool onS8_Backwards(Train_t currentTrain) {
+	return trainSection[currentTrain] == 8 &amp;&amp; trainSpeed[currentTrain] == backwards;
+}
+
+void updateTrainStartToLeave(Train_t currentTrain) {
+	trainAction[currentTrain] = wantToLeave;
+	lockBy = currentTrain;
+	parkedIn[getParkingOfTrain(currentTrain)] = -1;
+}</declaration><location id="id15" x="504" y="-336"><committed/></location><location id="id16" x="584" y="144"><committed/></location><location id="id17" x="584" y="-80"><committed/></location><location id="id18" x="504" y="-448"><committed/></location><location id="id19" x="-40" y="-8"><committed/></location><location id="id20" x="-184" y="-8"></location><init ref="id20"/><transition><source ref="id15"/><target ref="id17"/><label kind="guard" x="536" y="-272">S4Free()</label></transition><transition><source ref="id15"/><target ref="id18"/><label kind="guard" x="512" y="-400">!S4Free()</label></transition><transition><source ref="id19"/><target ref="id17"/><label kind="guard" x="144" y="-192">parkedIn2(currentTrain)</label><label kind="synchronisation" x="144" y="-176">Open[2]!</label><label kind="assignment" x="144" y="-160">updateTrainStartToLeave(currentTrain)</label><nail x="128" y="-136"/><nail x="520" y="-136"/></transition><transition><source ref="id16"/><target ref="id20"/><label kind="synchronisation" x="616" y="120">GoBackwards[currentTrain]!</label><nail x="824" y="144"/><nail x="824" y="248"/><nail x="-184" y="248"/></transition><transition><source ref="id17"/><target ref="id20"/><label kind="synchronisation" x="616" y="-104">GoSlow[currentTrain]!</label><nail x="824" y="-80"/><nail x="824" y="248"/><nail x="-184" y="248"/></transition><transition><source ref="id18"/><target ref="id20"/><label kind="synchronisation" x="360" y="-536">Stop[currentTrain]!</label><nail x="504" y="-512"/><nail x="-184" y="-512"/></transition><transition><source ref="id19"/><target ref="id16"/><label kind="guard" x="152" y="136">parkedIn0(currentTrain)</label><label kind="synchronisation" x="152" y="152">Close[2]!</label><label kind="assignment" x="152" y="168">updateTrainStartToLeave(currentTrain)</label><nail x="120" y="192"/><nail x="520" y="192"/></transition><transition><source ref="id19"/><target ref="id16"/><label kind="guard" x="152" y="80">onS8_Backwards(currentTrain)</label><nail x="120" y="104"/><nail x="520" y="104"/></transition><transition><source ref="id19"/><target ref="id17"/><label kind="guard" x="144" y="-64">onS8_MainTrackFree(currentTrain)</label><label kind="synchronisation" x="144" y="-48">Open[3]!</label><label kind="assignment" x="144" y="-32">trainIsLeaving = true</label><nail x="112" y="-8"/><nail x="520" y="-8"/></transition><transition><source ref="id19"/><target ref="id15"/><label kind="guard" x="136" y="-376">onS3(currentTrain)</label><label kind="assignment" x="136" y="-360">updateTrainReachedMainTrack(currentTrain)</label><nail x="120" y="-336"/></transition><transition><source ref="id19"/><target ref="id17"/><label kind="guard" x="144" y="-256">parkedIn1(currentTrain)</label><label kind="synchronisation" x="144" y="-240">Close[1]!</label><label kind="assignment" x="144" y="-224">updateTrainStartToLeave(currentTrain)</label><nail x="128" y="-200"/><nail x="520" y="-200"/></transition><transition><source ref="id19"/><target ref="id17"/><label kind="guard" x="144" y="-120">onS7_ReachedSwitch2(currentTrain)</label><label kind="synchronisation" x="144" y="-104">Open[2]!</label><nail x="128" y="-80"/><nail x="520" y="-80"/></transition><transition><source ref="id19"/><target ref="id17"/><label kind="guard" x="152" y="16">onS6(currentTrain)</label><nail x="128" y="40"/><nail x="520" y="40"/></transition><transition><source ref="id19"/><target ref="id18"/><label kind="guard" x="136" y="-472">onS8_MainTrackOccupied(currentTrain)</label><nail x="112" y="-448"/></transition><transition><source ref="id20"/><target ref="id19"/><label kind="synchronisation" x="-160" y="-40">WantToLeave?</label></transition></template><template><name>WantToCrossS</name><declaration>
+bool sectionOrSwitchAheadNotFree(Train_t currentTrain) {
+	return  (trainSection[currentTrain] == 0 &amp;&amp; sectionState[1] == red) ||
+		(trainSection[currentTrain] == 1 &amp;&amp; sectionState[2] == red) ||
+		(trainSection[currentTrain] == 2 &amp;&amp; (sectionState[3] == red || trainIsLeaving == true)) ||
+		(trainSection[currentTrain] == 3 &amp;&amp; sectionState[4] == red) ||
+		(trainSection[currentTrain] == 4 &amp;&amp; !canLeaveSystem);
+}
+
+bool sectionAheadFree(Train_t currentTrain) {
+	return  (trainSection[currentTrain] == 1 &amp;&amp; sectionState[2] == green) ||
+		(trainSection[currentTrain] == 3 &amp;&amp; sectionState[4] == green);		
+}
+
+bool onS0_Switch0Free(Train_t currentTrain) {
+	return  trainSection[currentTrain] == 0 &amp;&amp;
+		sectionState[1] == green;
+}
+
+bool onS2_Switch3Free(Train_t currentTrain) {
+	return  trainSection[currentTrain] == 2 &amp;&amp;
+		sectionState[3] == green &amp;&amp;
+		trainIsLeaving == false;
+}
+
+bool onS4_CanLeaveSystem(Train_t currentTrain) {
+	return trainSection[currentTrain] == 4 &amp;&amp; canLeaveSystem;
+}</declaration><location id="id21" x="-144" y="8"><committed/></location><location id="id22" x="-504" y="40"><committed/></location><location id="id23" x="-832" y="40"></location><init ref="id23"/><transition><source ref="id22"/><target ref="id21"/><label kind="guard" x="-448" y="-128">onS4_CanLeaveSystem(currentTrain)</label><label kind="assignment" x="-448" y="-112">enqueue(currentTrain)</label><nail x="-456" y="-88"/><nail x="-192" y="-88"/></transition><transition><source ref="id21"/><target ref="id23"/><label kind="synchronisation" x="-312" y="136">GoSlow[currentTrain]!</label><nail x="-144" y="160"/><nail x="-832" y="160"/></transition><transition><source ref="id22"/><target ref="id21"/><label kind="guard" x="-448" y="64">onS0_Switch0Free(currentTrain)</label><label kind="synchronisation" x="-448" y="80">Close[0]!</label><nail x="-456" y="104"/><nail x="-192" y="104"/></transition><transition><source ref="id22"/><target ref="id21"/><label kind="guard" x="-448" y="-56">sectionAheadFree(currentTrain)</label><nail x="-456" y="-32"/><nail x="-192" y="-32"/></transition><transition><source ref="id22"/><target ref="id21"/><label kind="guard" x="-448" y="0">onS2_Switch3Free(currentTrain)</label><label kind="synchronisation" x="-448" y="16">Close[3]!</label><nail x="-456" y="40"/><nail x="-192" y="40"/></transition><transition><source ref="id22"/><target ref="id23"/><label kind="guard" x="-824" y="-56">sectionOrSwitchAheadNotFree(currentTrain)</label><label kind="synchronisation" x="-824" y="-40">Stop[currentTrain]!</label><nail x="-504" y="-64"/><nail x="-832" y="-64"/></transition><transition><source ref="id23"/><target ref="id22"/><label kind="synchronisation" x="-728" y="16">WantToCross?</label></transition></template><template><name>WantToParkS</name><declaration>
+bool reachedParkingSpot(Train_t currentTrain) {
+	return ((trainSection[currentTrain] == 9 &amp;&amp; willParkTo[currentTrain] == 0) ||
+		(trainSection[currentTrain] == 5 &amp;&amp; willParkTo[currentTrain] == 1) ||
+		(trainSection[currentTrain] == 7 &amp;&amp; willParkTo[currentTrain] == 2));
+}
+
+bool onS0_FulfillsConditionsToPark(Train_t currentTrain) {
+	return  trainSection[currentTrain] == 0 &amp;&amp;
+		willParkTo[currentTrain] == -1 &amp;&amp;
+		getFreeParkingSpot() != -1;
+}
+
+bool onS0_NotFulfillsConditionsToPark(Train_t currentTrain) {
+	return  trainSection[currentTrain] == 0 &amp;&amp;
+		willParkTo[currentTrain] == -1 &amp;&amp;
+		getFreeParkingSpot() == -1;
+}
+
+void assignParkingSpotAndLock(Train_t currentTrain) {
+	trainAction[currentTrain] = wantToPark;
+	willParkTo[currentTrain] = getFreeParkingSpot();
+	lockBy = currentTrain;
+}
+
+void updateTrainForCrossing(Train_t currentTrain) {
+	trainAction[currentTrain] = wantToCross;
+}
+
+void updateTrainIsParked(Train_t currentTrain) {
+	trainAction[currentTrain] = parked;
+	parkedIn[willParkTo[currentTrain]] = currentTrain;
+	willParkTo[currentTrain] = -1;
+	lockBy = -1;
+	parkTrain = false;
+}
+
+bool onS0_S1Occupied(Train_t currentTrain) {
+	return  trainSection[currentTrain] == 0 &amp;&amp;
+		willParkTo[currentTrain] != -1 &amp;&amp;
+		sectionState[1] == red;
+}
+
+bool onS0_S1Free(Train_t currentTrain) {
+	return  trainSection[currentTrain] == 0 &amp;&amp;
+		sectionState[1] == green &amp;&amp;
+		willParkTo[currentTrain] != -1;
+}
+
+bool onS6_Backwards(Train_t currentTrain) {
+	return trainSection[currentTrain] == 6 &amp;&amp; trainSpeed[currentTrain] == backwards;
+}
+
+bool onS6_Frontwards_or_onS8(Train_t currentTrain) {
+	return  ((trainSection[currentTrain] == 6 &amp;&amp; trainSpeed[currentTrain] != backwards) ||
+		(trainSection[currentTrain] == 8 &amp;&amp; willParkTo[currentTrain] == 0));
+}
+
+bool onS7_willParkTo0(Train_t currentTrain) {
+	return trainSection[currentTrain] == 7 &amp;&amp; willParkTo[currentTrain] == 0;
+}
+
+bool onS7_willParkTo1(Train_t currentTrain) {
+	return trainSection[currentTrain] == 7 &amp;&amp; willParkTo[currentTrain] == 1;
+}
+
+bool onS1(Train_t currentTrain) {
+	return trainSection[currentTrain] == 1;
+}
+
+
+
+</declaration><location id="id24" x="-264" y="456"><committed/></location><location id="id25" x="-264" y="312"><committed/></location><location id="id26" x="-264" y="128"><committed/></location><location id="id27" x="-848" y="128"><committed/></location><location id="id28" x="-992" y="128"></location><init ref="id28"/><transition><source ref="id26"/><target ref="id28"/><label kind="synchronisation" x="-232" y="104">GoSlow[currentTrain]!</label><nail x="-40" y="128"/><nail x="-40" y="512"/><nail x="-992" y="512"/></transition><transition><source ref="id25"/><target ref="id28"/><label kind="synchronisation" x="-240" y="288">Stop[currentTrain]!</label><nail x="-40" y="312"/><nail x="-40" y="512"/><nail x="-992" y="512"/></transition><transition><source ref="id24"/><target ref="id28"/><label kind="synchronisation" x="-248" y="432">GoBackwards[currentTrain]!</label><nail x="-40" y="456"/><nail x="-40" y="512"/><nail x="-992" y="512"/></transition><transition><source ref="id27"/><target ref="id24"/><label kind="guard" x="-616" y="448">onS7_willParkTo1(currentTrain)</label><label kind="synchronisation" x="-616" y="464">Close[1]!</label><nail x="-640" y="488"/><nail x="-320" y="488"/></transition><transition><source ref="id27"/><target ref="id24"/><label kind="guard" x="-616" y="392">onS6_Backwards(currentTrain)</label><nail x="-640" y="416"/><nail x="-312" y="416"/></transition><transition><source ref="id27"/><target ref="id25"/><label kind="guard" x="-616" y="304">reachedParkingSpot(currentTrain)</label><label kind="assignment" x="-616" y="320">updateTrainIsParked(currentTrain)</label><nail x="-640" y="344"/><nail x="-320" y="344"/></transition><transition><source ref="id27"/><target ref="id25"/><label kind="guard" x="-616" y="264">onS0_S1Occupied(currentTrain)</label><nail x="-640" y="288"/><nail x="-320" y="288"/></transition><transition><source ref="id27"/><target ref="id26"/><label kind="guard" x="-616" y="184">onS6_Frontwards_or_onS8(currentTrain)</label><nail x="-648" y="208"/><nail x="-328" y="208"/></transition><transition><source ref="id27"/><target ref="id26"/><label kind="guard" x="-624" y="120">onS7_willParkTo0(currentTrain)</label><label kind="synchronisation" x="-624" y="136">Close[2]!</label><nail x="-648" y="160"/><nail x="-336" y="160"/></transition><transition><source ref="id27"/><target ref="id26"/><label kind="guard" x="-624" y="56">onS1(currentTrain)</label><label kind="synchronisation" x="-624" y="72">Open[1]!</label><nail x="-648" y="96"/><nail x="-344" y="96"/></transition><transition><source ref="id27"/><target ref="id26"/><label kind="guard" x="-624" y="0">onS0_S1Free(currentTrain)</label><label kind="synchronisation" x="-624" y="16">Open[0]!</label><nail x="-648" y="40"/><nail x="-352" y="40"/></transition><transition><source ref="id27"/><target ref="id27"/><label kind="guard" x="-776" y="-224">onS0_FulfillsConditionsToPark(currentTrain)</label><label kind="assignment" x="-776" y="-208">assignParkingSpotAndLock(currentTrain)</label><nail x="-776" y="-184"/><nail x="-432" y="-184"/><nail x="-432" y="-232"/><nail x="-840" y="-232"/></transition><transition><source ref="id27"/><target ref="id28"/><label kind="guard" x="-768" y="-144">onS0_NotFulfillsConditionsToPark(currentTrain)</label><label kind="synchronisation" x="-768" y="-128">WantToCross!</label><label kind="assignment" x="-768" y="-112">updateTrainForCrossing(currentTrain)</label><nail x="-768" y="-88"/><nail x="-416" y="-88"/><nail x="-416" y="-256"/><nail x="-992" y="-256"/></transition><transition><source ref="id28"/><target ref="id27"/><label kind="synchronisation" x="-960" y="104">WantToPark?</label></transition></template><template><name>SubSystem1</name><location id="id29" x="-672" y="-216"></location><init ref="id29"/><transition><source ref="id29"/><target ref="id29"/><label kind="guard" x="-592" y="-208">!canLeaveSystem</label><label kind="assignment" x="-592" y="-192">canLeaveSystem = true</label><nail x="-600" y="-208"/><nail x="-600" y="-168"/></transition><transition><source ref="id29"/><target ref="id29"/><label kind="guard" x="-592" y="-272">canLeaveSystem</label><label kind="assignment" x="-592" y="-256">canLeaveSystem = false</label><nail x="-600" y="-272"/><nail x="-600" y="-232"/></transition></template><system>
+system Train, Section, Controller, Environment, Switch, User, WantToLeaveS, WantToCrossS, WantToParkS;</system></nta>
