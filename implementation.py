@@ -29,7 +29,7 @@ PARKED = 3
 
 CONTROLLER_MAX_IDLE = 2000
 
-#                      0           1         2        3         4         5         6         7          8         9         10       11       12        13         14        15
+#                    0           1         2        3         4         5         6         7          8         9         10       11       12        13         14        15
 SECTION_SENSORS = [ "LS1569", "LS1570", "LS1571", "LS1572", "LS1573", "LS1574", "LS1575", "LS1576", "LS1577", "LS1578", "LS1579", "LS1580", "LS1581",  "LS1582", "LS1583", "LS1584" ]
 SWITCHES_ADDRESSES = ["LT22", "LT44", "LT66", "LT88"]
 TRAIN_THROTTLES = [5, 6, 8, 4]
@@ -39,7 +39,6 @@ class ControllerS1(jmri.jmrit.automat.AbstractAutomaton):
 	def __init__(self, manager):
 		self.manager = manager
 		
-		
 	def init(self):	
 		print "ControllerS1 initializing"
 		self.mustContinue = True
@@ -48,17 +47,14 @@ class ControllerS1(jmri.jmrit.automat.AbstractAutomaton):
 		self.sections = GlobalManager.sections[10:16]
 		print "ControllerS1 initialized"
 
-
 	def getTrainOnSection(self, section):
 		for train in self.trains:
 			if train.section == section:
 				return train
 		return -1
-	
 
 	def emergencyStop(self):
 		self.manager.emergencyStop()
-	
 	
 	def handle(self):
 		self.waitSensorActive(self.syncSensor)
@@ -67,21 +63,13 @@ class ControllerS1(jmri.jmrit.automat.AbstractAutomaton):
 			if train.section.ID == LAST and train.speed == STOPPED:
 				self.takeDecision(train)
 		return self.mustContinue
-
-		
 	
 	def update(self,train):
 		self.takeDecision(train)
 	
 	@make_synchronized
-	def takeDecision(self,train):
-		print "S1 - Take Decision"
-		if train.section.ID < 10:
-			print "Controller error. Function updateForSubSystem1() should not be called with a train that is not in the system. \nTrain = " + str(train.ID) + ". CurrentSection = " + str(train.section.ID)
-			self.emergencyStop()
-		
+	def takeDecision(self,train):	
 		if train.section.ID == LAST:
-			print "S1 - Train on the last section. CanLeave = " + str(SubSystem2.canLeave()) + ". State of section 0 = " + str(GlobalManager.getSectionWithID(0).state)
 			if SubSystem2.canLeave():
 				train.runSlow()
 			else:
@@ -89,14 +77,12 @@ class ControllerS1(jmri.jmrit.automat.AbstractAutomaton):
 			return
 			
 		nextSection = self.manager.getSectionWithID(train.section.ID + 1)
-
 		if nextSection.state == GREEN:
 			train.runFast()
 		elif nextSection.state == YELLOW:
 			train.runSlow()
 		elif nextSection.state == RED:
 			train.stop()
-	
 		
 class ControllerS2(jmri.jmrit.automat.AbstractAutomaton):
 	trainLeaving = -1
@@ -119,12 +105,10 @@ class ControllerS2(jmri.jmrit.automat.AbstractAutomaton):
 		self.sections = GlobalManager.sections[0:10]
 		self.parkedIn = [self.trains[0], self.trains[1], self.trains[2]]
 		self.trainsQueue = []
-		
 		print "ControllerS2 initialized"
 	
 	def emergencyStop(self):
 		self.manager.emergencyStop()
-
 
 	def getTrainOnSection(self, section):
 		for train in self.trains:
@@ -166,29 +150,23 @@ class ControllerS2(jmri.jmrit.automat.AbstractAutomaton):
 		return counter
 		
 	def parkTrainF(self):
-		if self.numberOfTrainParked() >= NTRAINS:
-			return False
-			
-		if self.numberOfTrainParked() >= NPARKINGS:
+		if self.numberOfTrainParked() >= NTRAINS or self.numberOfTrainParked() >= NPARKINGS:
 			return False
 		
 		if self.numberOfTrainParked() < NPARKINGS:
 			self.parkTrain = True
 			self.userView.deactivateButtons()
 			return True
-			
-		return False  # Should never get here
+		return False  
 		
-
 	def addTrainF(self):
 		if self.numberOfTrainParked() > 0:
 			self.addTrain = True
 			self.userView.deactivateButtons()
 			return True
 		elif self.numberOfTrainParked() <= 0:
-			return False
-			
-		return False  # Should never get here
+			return False	
+		return False  
 
 	def resetAddTrain(self):
 		self.addTrain = False
@@ -198,7 +176,6 @@ class ControllerS2(jmri.jmrit.automat.AbstractAutomaton):
 		self.parkTrain = False
 		self.userView.activateButtons()
 		
-	
 	def handle(self):
 		self.waitSensorActive(self.syncSensor)
 		self.waitMsec(CONTROLLER_MAX_IDLE)
@@ -212,13 +189,13 @@ class ControllerS2(jmri.jmrit.automat.AbstractAutomaton):
 		return self.mustContinue
 	
 	def canPark(self, train):
-		return train.action == WANTTOPARK and train.speed == STOPPED and not(train.section.ID == 0 and self.getSectionWithID(1).state == RED)
+		return train.action == WANTTOPARK and train.speed == STOPPED and not(train.section.ID == 0 and self.manager.getSectionWithID(1).state == RED)
 	
 	def canCross(self, train):
-		return train.action == WANTTOCROSS and train.speed == STOPPED and not(train.section.ID < 4 and self.getSectionWithID(train.section.ID+1).state == RED) and not(train.section.ID == 2 and self.trainIsLeaving)
+		return train.action == WANTTOCROSS and train.speed == STOPPED and not(train.section.ID < 4 and self.manager.getSectionWithID(train.section.ID+1).state == RED) and not(train.section.ID == 2 and self.trainIsLeaving)
 	
 	def canLeave(self, train):
-		return (train.action == WANTTOLEAVE and train.speed == STOPPED and not(self.getSectionWithID(2).state == RED or self.getSectionWithID(3).state == RED)) or \
+		return (train.action == WANTTOLEAVE and train.speed == STOPPED and not(self.manager.getSectionWithID(2).state == RED or self.manager.getSectionWithID(3).state == RED)) or \
 				 (train.action == PARKED and self.addTrain == True and self.canLeave(train) == True and self.lockBy == -1)
 	
 	def conditionsFullfilledToCross(train):
@@ -231,27 +208,15 @@ class ControllerS2(jmri.jmrit.automat.AbstractAutomaton):
 		return (train.action == WANTTOPARK and self.lockBy == train.ID) or (train.action == WANTTOCROSS and train.section.ID == 0 and self.parkTrain == True and self.getFreeParkingSpot() != -1 and self.lockBy == -1)
 	
 	def update(self, train):
-	
-		#print "\n \n TakeDecisionForSubSystem2 ----------------------------------------------- "
-		#print "Train " + str(train.ID) + ". Action = " + str(train.action) + ". CurrentSection = " + str(train.section.ID)
-		#print "LockBy = " + str(self.lockBy) + ". FreeParkingSpot() = " + str(self.getFreeParkingSpot())
-		if train.section.ID > 9 or train.section.ID < 0:
-			self.emergencyStop()
-			print "Controller error. Function updateForSubSystem2() should not be called with a train that is not in the system"
-			return
-			
 		if self.conditionsFullfilledToCross(train):
 			self.wantToCross(train)
 		elif self.conditionsFullfilledToLeave(train):
 			self.wantToLeave(train)
 		elif conditionsFullfilledToPark(train):
 			self.wantToPark(train)
-		return
 	
 	@make_synchronized
 	def wantToPark(self, train):
-		#print "Wanttopark. Train = " + str(train.ID) + ". WillParkTo = "+ str(train.willParkTo) + ". freeParkingSpot = " + str(self.getFreeParkingSpot())
-		# Special cases
 		if train.section.ID == 0 and train.willParkTo == -1 and self.getFreeParkingSpot() != -1:
 			train.action = WANTTOPARK
 			train.willParkTo = self.getFreeParkingSpot()
@@ -262,23 +227,21 @@ class ControllerS2(jmri.jmrit.automat.AbstractAutomaton):
 			train.action = WANTTOCROSS
 			self.wantToCross(train)
 			
-		# Conditions to run slowly
-		elif train.section.ID == 0 and self.getSectionWithID(1).state == GREEN and train.willParkTo != -1:
-			self.getSwitchWithID(0).close()
+		elif train.section.ID == 0 and self.manager.getSectionWithID(1).state == GREEN and train.willParkTo != -1:
+			self.manager.getSwitchWithID(0).close()
 			train.runSlow()
 		elif train.section.ID == 1:
-			self.getSwitchWithID(1).close()
+			self.manager.getSwitchWithID(1).close()
 			train.runSlow()
 		elif train.section.ID == 7 and train.willParkTo == 0:
-			self.getSwitchWithID(2).close()
+			self.manager.getSwitchWithID(2).close()
 			train.runSlow()
 		elif train.section.ID == 6 and train.speed != BACKWARDS:
 			train.runSlow()
 		elif train.section.ID == 8 and train.willParkTo == 0:
 			train.runSlow()
 			
-		# Conditions to stop
-		elif train.section.ID == 0 and self.getSectionWithID(1).state == RED and train.willParkTo != -1:
+		elif train.section.ID == 0 and self.manager.getSectionWithID(1).state == RED and train.willParkTo != -1:
 			train.stop()
 		elif (train.section.ID == 9 and train.willParkTo == 0) or (train.section.ID == 5 and train.willParkTo == 1) or (train.section.ID == 7 and train.willParkTo == 2):
 			self.parkedIn[train.willParkTo] = train 
@@ -288,119 +251,103 @@ class ControllerS2(jmri.jmrit.automat.AbstractAutomaton):
 			train.willParkTo = -1
 			train.stop()
 			
-		# Conditions to run backwards
 		elif train.section.ID == 6 and train.speed == BACKWARDS:
 			train.runBackwards()
 		elif train.section.ID == 7 and train.willParkTo == 1:
-			self.getSwitchWithID(1).open()
+			self.manager.getSwitchWithID(1).open()
 			train.runBackwards()
-		
-		return
 	
 	@make_synchronized
 	def wantToLeave(self, train):
-		# Conditions to stop
-		if train.section.ID == 3 and self.getSectionWithID(4) == RED:
+		if train.section.ID == 3 and self.manager.getSectionWithID(4) == RED:
 			train.action = WANTTOCROSS
 			train.stop()
 			self.lockBy = -1
 			self.trainIsLeaving = False
 			self.resetAddTrain()
 			
-		elif train.section.ID == 3 and self.getSectionWithID(4).state == GREEN:
+		elif train.section.ID == 3 and self.manager.getSectionWithID(4).state == GREEN:
 			train.action = WANTTOCROSS
 			train.runSlow()
 			self.lockBy = -1
 			self.trainIsLeaving = False
 			self.resetAddTrain()
 			
-		elif train.section.ID == 8 and train.speed != BACKWARDS and (self.getSectionWithID(2).state == RED or self.getSectionWithID(3).state == RED):
+		elif train.section.ID == 8 and train.speed != BACKWARDS and (self.manager.getSectionWithID(2).state == RED or self.manager.getSectionWithID(3).state == RED):
 			train.stop()
 		
-		# Conditions to run
 		elif train.section.ID == 5:
 			train.action = WANTTOLEAVE
 			train.runSlow()
-			self.getSwitchWithID(1).open()
+			self.manager.getSwitchWithID(1).open()
 			self.lockBy = train.ID
 			self.parkedIn[1] = -1
 			
 		elif train.section.ID == 7 and train.action == WANTTOLEAVE:
-			self.getSwitchWithID(2).open()
+			self.manager.getSwitchWithID(2).open()
 			train.runSlow()
 			
 		elif train.section.ID == 7 and train.action == PARKED:
 			train.action = WANTTOLEAVE
 			train.runSlow()
-			self.getSwitchWithID(2).open()
+			self.manager.getSwitchWithID(2).open()
 			self.lockBy = train.ID
 			self.parkedIn[2] = -1
 			
 			
-		elif train.section.ID == 8 and train.speed != BACKWARDS and self.getSectionWithID(2).state == GREEN and self.getSectionWithID(3).state == GREEN:
+		elif train.section.ID == 8 and train.speed != BACKWARDS and self.manager.getSectionWithID(2).state == GREEN and self.manager.getSectionWithID(3).state == GREEN:
 			train.runSlow()
-			self.getSwitchWithID(3).open()
+			self.manager.getSwitchWithID(3).open()
 			self.trainIsLeaving = True
 			
 		elif train.section.ID == 6:
 			train.runSlow()
 			
-		
-		# Conditions to run backwards
 		elif train.section.ID == 8 and train.speed == BACKWARDS:
 			train.runBackwards()
 			
 		elif train.section.ID == 9:
 			train.action = WANTTOLEAVE
 			train.runBackwards()
-			self.getSwitchWithID(2).close()
+			self.manager.getSwitchWithID(2).close()
 			self.lockBy = train.ID
 			self.parkedIn[0] = -1
-			
-		return
 	
 	@make_synchronized
 	def wantToCross(self, train):
-		# Conditions to stop
-		if train.section.ID == 0 and self.getSectionWithID(1).state == RED:
+		if train.section.ID == 0 and self.manager.getSectionWithID(1).state == RED:
 			train.stop()
 			
-		elif train.section.ID == 1 and self.getSectionWithID(2).state == RED:
+		elif train.section.ID == 1 and self.manager.getSectionWithID(2).state == RED:
 			train.stop()
 			
-		elif train.section.ID == 2 and (self.getSectionWithID(3).state == RED or self.trainIsLeaving):
+		elif train.section.ID == 2 and (self.manager.getSectionWithID(3).state == RED or self.trainIsLeaving):
 			train.stop()
 			
-		elif train.section.ID == 3 and self.getSectionWithID(4).state == RED:
+		elif train.section.ID == 3 and self.manager.getSectionWithID(4).state == RED:
 			train.stop()
 			
 		elif train.section.ID == 4 and not SubSystem1.canLeave():
-			print "S2 - Train on the last section. CanLeave = " + str(SubSystem1.canLeave()) + ". State of section 10 = " + str(GlobalManager.getSectionWithID(10).state)
 			train.stop()
 			
-		# Conditions to run
-		elif train.section.ID == 2 and self.getSectionWithID(3).state == GREEN and not self.trainIsLeaving:
-			self.getSwitchWithID(3).open()
+		elif train.section.ID == 2 and self.manager.getSectionWithID(3).state == GREEN and not self.trainIsLeaving:
+			self.manager.getSwitchWithID(3).open()
 			train.runSlow()
 			
-		elif train.section.ID == 0 and self.getSectionWithID(1).state == GREEN:
-			self.getSwitchWithID(0).open()
+		elif train.section.ID == 0 and self.manager.getSectionWithID(1).state == GREEN:
+			self.manager.getSwitchWithID(0).open()
 			train.runSlow()
 			
-		elif train.section.ID == 3 and self.getSectionWithID(4).state == GREEN:
+		elif train.section.ID == 3 and self.manager.getSectionWithID(4).state == GREEN:
 			train.runSlow()
 			
 		elif train.section.ID == 4 and SubSystem1.canLeave():
-			print "S2 - Train on the last section. CanLeave = " + str(SubSystem1.canLeave()) + ". State of section 10 = " + str(GlobalManager.getSectionWithID(10).state)
 			ControllerS2.trainLeaving = train
 			self.trainsQueue.append(train)
-			print "S2 - trainsQueue = " + str(len(self.trainsQueue))
 			train.runSlow()
 			
-		elif train.section.ID == 1 and self.getSectionWithID(2).state == GREEN:
+		elif train.section.ID == 1 and self.manager.getSectionWithID(2).state == GREEN:
 			train.runSlow()
-		
-		return	
 	
 	def getPreviousSectionID(self, sectionID):
 		if sectionID == 0:
@@ -453,59 +400,46 @@ class ControllerS2(jmri.jmrit.automat.AbstractAutomaton):
 
 	
 class SectionS1(jmri.jmrit.automat.AbstractAutomaton):
-		
 	def __init__(self, identification, controller, sensorName,  state, section):
 		self.controller = controller
 		self.ID = identification
 		self.sensor = sensors.provideSensor(sensorName)
 		self.state = state
 		self.previousSection = section
-        
 
 	def handle(self):
 		self.waitSensorActive(self.controller.syncSensor)
-		value = "FREE"
 		
 		if self.state == RED:
 			self.waitSensorInactive(self.sensor)
-			
-			self.waitMsec(50)
 			trainToUpdate = self.becomesFree()
-			
 			if trainToUpdate != -1:
 				self.controller.update(trainToUpdate)
 				
 		elif self.state != RED:
 			self.waitSensorActive(self.sensor)
 			
-			
-			self.waitSensorInactive(self.previousSection.sensor)
-			value = "OCCUPIED"
-			trainToUpdate = self.becomesOccupiedBy()
-			if trainToUpdate != -1:
-				self.controller.update(trainToUpdate)
-			else: 
+			trainToUpdate = self.getTrainEntering()
+			if trainToUpdate == -1: 
 				self.controller.emergencyStop()
-			
-		print "\t Section " + str(self.ID) + " became " + str(value)
+			else:
+				self.waitSensorInactive(self.previousSection.sensor)
+				self.becomesOccupied()
+				self.controller.update(trainToUpdate)
 		return True
 
-	@make_synchronized
- 	def becomesOccupiedBy(self):
-		self.state = RED
-		
+	def getTrainEntering(self):
 		if self.ID > 10:
-			currentTrain = self.controller.getTrainOnSection(self.previousSection)
+			return self.controller.getTrainOnSection(self.previousSection)
 		else:
-			currentTrain = ControllerS2.trainLeaving
-			
+			return ControllerS2.trainLeaving
+
+	@make_synchronized
+ 	def becomesOccupied(self, currentTrain):
+		self.state = RED
 		if currentTrain != -1:
 			currentTrain.section = self
-			print "S1 - Train " + str(currentTrain.ID) + " has reached Section " + str(self.ID)
-
-		return currentTrain;
-	
-		
+			
 	@make_synchronized
 	def becomesFree(self):
 		if self.ID != LAST:
@@ -518,16 +452,12 @@ class SectionS1(jmri.jmrit.automat.AbstractAutomaton):
 				self.previousSection.state = GREEN
 		
 		return self.getTrainWaitingForSection()
-		
-		
-
 	
 	def getTrainWaitingForSection(self):
 		if self.ID > 10:
 			return self.controller.getTrainOnSection(self.previousSection)
 		return -1
 
-	
 class SectionS2(jmri.jmrit.automat.AbstractAutomaton):
 	def init(self):
 		return
@@ -539,29 +469,25 @@ class SectionS2(jmri.jmrit.automat.AbstractAutomaton):
 		self.state = state
         
 	def handle(self):
-		#print "\n \n SECTION HANDLE - " + str(self.ID)
 		self.waitSensorActive(self.controller.syncSensor)
-		value = "FREE"
 		
 		if self.state == RED:
-			#print "waitForSensorInactive"
 			self.waitSensorInactive(self.sensor)
 			self.becomesFree()
 					
 		elif self.state != RED:
-			#print "waitForSensorActive"
 			self.waitSensorActive(self.sensor)
 				
 			previousSectionID = self.controller.getPreviousSectionID(self.ID)
-			self.waitSensorInactive(GlobalManager.getSectionWithID(previousSectionID).sensor)
-			value = "OCCUPIED"
-			trainToUpdate = self.becomesOccupiedBy(previousSectionID)
-			if trainToUpdate != -1:
-				self.controller.update(trainToUpdate)
-			else :
+			if previousSectionID == -1:
 				self.controller.emergencyStop()
-			
-		print "\t Section " + str(self.ID) + " became " + str(value)
+			else :
+				self.waitSensorInactive(GlobalManager.getSectionWithID(previousSectionID).sensor)
+				trainToUpdate = self.becomesOccupiedBy(previousSectionID)
+				if trainToUpdate != -1:
+					self.controller.update(trainToUpdate)
+				else :
+					self.controller.emergencyStop()
 		return True
 
 	@make_synchronized
@@ -572,7 +498,6 @@ class SectionS2(jmri.jmrit.automat.AbstractAutomaton):
 			if len(self.controller.trainsQueue) > 0:
 				currentTrain = self.controller.trainsQueue.pop(0)
 			else:
-				print "SectionS2 - Fatal error. TrainsQueue is empty."
 				self.controller.emergencyStop()
 		else:
 			previousSection = self.controller.getSectionWithID(previousSectionID)
@@ -580,28 +505,15 @@ class SectionS2(jmri.jmrit.automat.AbstractAutomaton):
 			
 		if currentTrain != -1:
 			currentTrain.section = self
-			print "S2 - Train " + str(currentTrain.ID) + " has reached Section " + str(self.ID)
 			
 		return currentTrain			
        
     @make_synchronized
     def becomesFree(self):
 		self.state = green;
-		#if (id == 4){
-		#	int[-1, nTrains-1] train = getTrainOnSection(id);
-		#	if (train != -1) {
-		#		trainSection[train] = -1;
-		#	}	
-		#	enqueue(train);
-		#}
 	
-
-
-
-
 class Train():
 	def __init__(self, identification, throttle, section, speed, action, slow, fast):
-		
 		self.ID = identification
 		self.loco = throttle
 		self.section = section
@@ -612,44 +524,33 @@ class Train():
         
 		self.slow = slow
 		self.fast = fast
-		
         
 		if(self.loco == None):
 				print "Error initializing throttle."
-		return
-
         
 	def runFast(self):
 		self.speed = FAST
 		throttle = GlobalManager.throttles[self.ID]
 		throttle.setIsForward(True)
 		throttle.setSpeedSetting(self.fast)
-		print "Train "+ str(self.ID)+" - runFast sent"
-		return
 	
 	def runSlow(self):
 		self.speed = SLOW
 		throttle = GlobalManager.throttles[self.ID]
 		throttle.setIsForward(True)
 		throttle.setSpeedSetting(self.slow)
-		print "Train "+ str(self.ID)+" - runSlow sent"
-		return
 		
 	def stop(self):
 		self.speed = STOPPED
 		throttle = GlobalManager.throttles[self.ID]
 		throttle.setIsForward(True)
 		throttle.setSpeedSetting(0.0)
-		print "Train "+ str(self.ID)+" - stop sent"
-		return
 		
 	def runBackwards(self):
 		self.speed = BACKWARDS
 		throttle = GlobalManager.throttles[self.ID]
 		throttle.setIsForward(False)
 		throttle.setSpeedSetting(self.slow)
-		print "Train "+ str(self.ID)+" - runSlow sent"
-		return
 
 class Switch():
 	def __init__(self, ID, switch):
@@ -658,11 +559,9 @@ class Switch():
 		
 	def open(self):
 		self.switch.setState(THROWN)	
-		return
 	
 	def close(self):
 		self.switch.setState(CLOSED)
-		return
 
 class UserView():
 	def __init__(self, manager):
@@ -682,8 +581,6 @@ class UserView():
 		self.parkTrainButton.setEnabled(True)       
 		self.parkTrainButton.setToolTipText("Park a train")
 		self.parkTrainButton.actionPerformed = self.parkTrain
-
-
 
 		self.totalGUI = javax.swing.JPanel()
 		self.totalGUI.setSize(400,400)
@@ -712,10 +609,8 @@ class UserView():
 		self.frame.setVisible(True)
 	
 	def stopButtonClicked(self,event):
-		print "\n --------------------------------- \nSystem is stopping"
 		self.manager.emergencyStop()	
 		self.frame.dispose()
-		print "System stopped\n --------------------------------- \n"
 		
 	def deactivateButtons(self):
 		self.parkTrainButton.setEnabled(False)
@@ -726,18 +621,10 @@ class UserView():
 		self.addTrainButton.setEnabled(True)
 		
 	def addTrain(self, event):
-		if self.manager.controllerS2.addTrainF() :
-			print "addTrain - REQUEST OK"
-		else: 
-			print "addTrain - REQUEST NOT OK"
-		return
+		self.manager.controllerS2.addTrainF() :
 		
 	def parkTrain(self, event):
-		if self.manager.controllerS2.parkTrainF():
-			print "parkTrain - REQUEST OK"
-		else: 
-			print "parkTrain - REQUEST NOT OK"
-		return
+		self.manager.controllerS2.parkTrainF():
 		
 class SubSystem2():
 	@staticmethod
@@ -746,9 +633,6 @@ class SubSystem2():
 			return True
 		return False
 		
-		
-
-			
 class SubSystem1():
 	@staticmethod
 	def canLeave():
@@ -778,7 +662,6 @@ class GlobalManager(jmri.jmrit.automat.AbstractAutomaton):
 		GlobalManager.throttles.append(self.getThrottle(TRAIN_THROTTLES[3], False))
 		print "Global Manager - throttles initialized"
 		
-	
 		# Sections for second controller
 		GlobalManager.sections.append(SectionS2(0, self.controllerS2, SECTION_SENSORS[0], GREEN))
 		GlobalManager.sections.append(SectionS2(1, self.controllerS2, SECTION_SENSORS[1], GREEN))
@@ -798,7 +681,6 @@ class GlobalManager(jmri.jmrit.automat.AbstractAutomaton):
 		GlobalManager.sections.append(SectionS1(14, self.controllerS1, SECTION_SENSORS[14], GREEN, GlobalManager.sections[13]))
 		GlobalManager.sections.append(SectionS1(15, self.controllerS1, SECTION_SENSORS[15], GREEN, GlobalManager.sections[14]))
 		
-		
 		GlobalManager.trains.append(Train(0, GlobalManager.throttles[0], GlobalManager.sections[9], STOPPED, PARKED, 0.25, 0.99))
 		GlobalManager.trains.append(Train(1, GlobalManager.throttles[1], GlobalManager.sections[5], STOPPED, PARKED, 0.20, 0.99))
 		GlobalManager.trains.append(Train(2, GlobalManager.throttles[2], GlobalManager.sections[7], STOPPED, PARKED, 0.10, 0.40))
@@ -810,13 +692,10 @@ class GlobalManager(jmri.jmrit.automat.AbstractAutomaton):
 		GlobalManager.switches.append(Switch(2,turnouts.provideTurnout(SWITCHES_ADDRESSES[2])))
 		GlobalManager.switches.append(Switch(3,turnouts.provideTurnout(SWITCHES_ADDRESSES[3])))
 		print "GlobalManager - switches initialized"
-	
-		
 		
 		self.syncSensor = sensors.provideSensor("ISSYNC") # To synchronise the start of all the automaton (actually, for the section to start once all is initialized)
 		self.syncSensor.setState(INACTIVE)
 		self.waitMsec(100) # To be sure that the sensor is inactive when the controllers start
-		
 		
 		self.controllerS1.start()
 		self.controllerS2.start()
@@ -826,7 +705,6 @@ class GlobalManager(jmri.jmrit.automat.AbstractAutomaton):
 		for section in GlobalManager.sections:
 			section.start()
 		print "GlobalManager - sections started"
-		
 		
 		self.waitMsec(3000)
 		print "------------------------------------ SYNC OK ------------------------------------"
@@ -845,7 +723,6 @@ class GlobalManager(jmri.jmrit.automat.AbstractAutomaton):
 		self.controllerS2.stop()
 		self.printInfo()
 		self.stop()
-		return
 		
 	@staticmethod
 	def printInfo():
@@ -871,7 +748,6 @@ class GlobalManager(jmri.jmrit.automat.AbstractAutomaton):
 			if section.ID == ID:
 				return section
 		return -1
-	
 	
 if __name__ == "__main__":
 	manager = GlobalManager()
