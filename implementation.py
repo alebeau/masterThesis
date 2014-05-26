@@ -196,15 +196,15 @@ class ControllerS2(jmri.jmrit.automat.AbstractAutomaton):
 	
 	def canLeave(self, train):
 		return (train.action == WANTTOLEAVE and train.speed == STOPPED and not(self.manager.getSectionWithID(2).state == RED or self.manager.getSectionWithID(3).state == RED)) or \
-				 (train.action == PARKED and self.addTrain == True and self.canLeave(train) == True and self.lockBy == -1)
+				 (train.action == PARKED and self.addTrain == True and self.canLeaveParkingSpot(train) == True and self.lockBy == -1)
 	
-	def conditionsFullfilledToCross(train):
+	def conditionsFullfilledToCross(self, train):
 		return train.action == WANTTOCROSS and (train.section.ID != 0 or self.parkTrain == False or self.getFreeParkingSpot() == -1 or self.lockBy != -1)
 	
-	def conditionsFullfilledToLeave(train):
+	def conditionsFullfilledToLeave(self, train):
 		return train.action == WANTTOLEAVE and self.lockBy == train.ID
 		
-	def conditionsFullfilledToPark(train):
+	def conditionsFullfilledToPark(self, train):
 		return (train.action == WANTTOPARK and self.lockBy == train.ID) or (train.action == WANTTOCROSS and train.section.ID == 0 and self.parkTrain == True and self.getFreeParkingSpot() != -1 and self.lockBy == -1)
 	
 	def update(self, train):
@@ -212,7 +212,7 @@ class ControllerS2(jmri.jmrit.automat.AbstractAutomaton):
 			self.wantToCross(train)
 		elif self.conditionsFullfilledToLeave(train):
 			self.wantToLeave(train)
-		elif conditionsFullfilledToPark(train):
+		elif self.conditionsFullfilledToPark(train):
 			self.wantToPark(train)
 	
 	@make_synchronized
@@ -424,7 +424,7 @@ class SectionS1(jmri.jmrit.automat.AbstractAutomaton):
 				self.controller.emergencyStop()
 			else:
 				self.waitSensorInactive(self.previousSection.sensor)
-				self.becomesOccupied()
+				self.becomesOccupied(trainToUpdate)
 				self.controller.update(trainToUpdate)
 		return True
 
@@ -500,7 +500,7 @@ class SectionS2(jmri.jmrit.automat.AbstractAutomaton):
 			else:
 				self.controller.emergencyStop()
 		else:
-			previousSection = self.controller.getSectionWithID(previousSectionID)
+			previousSection = self.controller.manager.getSectionWithID(previousSectionID)
 			currentTrain = self.controller.getTrainOnSection(previousSection)
 			
 		if currentTrain != -1:
@@ -508,9 +508,9 @@ class SectionS2(jmri.jmrit.automat.AbstractAutomaton):
 			
 		return currentTrain			
        
-    @make_synchronized
-    def becomesFree(self):
-		self.state = green;
+	@make_synchronized
+	def becomesFree(self):
+		self.state = GREEN
 	
 class Train():
 	def __init__(self, identification, throttle, section, speed, action, slow, fast):
@@ -621,10 +621,10 @@ class UserView():
 		self.addTrainButton.setEnabled(True)
 		
 	def addTrain(self, event):
-		self.manager.controllerS2.addTrainF() :
+		self.manager.controllerS2.addTrainF()
 		
 	def parkTrain(self, event):
-		self.manager.controllerS2.parkTrainF():
+		self.manager.controllerS2.parkTrainF()
 		
 class SubSystem2():
 	@staticmethod
@@ -747,6 +747,13 @@ class GlobalManager(jmri.jmrit.automat.AbstractAutomaton):
 		for section in GlobalManager.sections:
 			if section.ID == ID:
 				return section
+		return -1
+	
+	@staticmethod
+	def getSwitchWithID(ID):
+		for switch in GlobalManager.switches:
+			if switch.ID == ID:
+				return switch
 		return -1
 	
 if __name__ == "__main__":
